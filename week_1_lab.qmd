@@ -202,9 +202,35 @@ m3_est_log = (-0.42)*100         # % change = -42
 ```
 This is telling us the estimate change, and you can see the difference in models used
 
+### Analysis check-in: 
+
+    So far the log-OLS regression model is the best fitting model we have specified 
+
+**The treatment estimate for log-OLS can be interpret as follows:**
+
+> *The model estimated that the treatment group had a 42% reduction in waste piles relative to the control group.*
+
+-   This estimate, however, is still not a robust causal effect (the OLS estimator is still a bit naive)
+-   Any ideas why this might be? - Discuss with you neighbor (Think. Pair. Share.)
+
 ### Compare observed data to simulated data based on the fitted model (`m3_log`)
 
 ```{r}
 check_predictions(m3_log, verbose = FALSE)
 ```
 
+Check for co treatement or covariance and if averages are similar then randomization works if its off there may be selection bias or omv bias 
+
+ Specifically, `pre_count_avg` (pre-treatment waste pile counts)
+
+```{r}
+
+post_treat_subset %>% 
+    select(treat, waste_piles, pre_count_avg) %>% 
+    tbl_summary(
+        by = treat,
+        statistic = list(all_continuous() ~ "{mean} ({sd})")) %>% 
+    modify_header(label ~ "**Variable**") %>%
+    modify_spanning_header(c("stat_1", "stat_2") ~ "**Treatment**") 
+    
+```
