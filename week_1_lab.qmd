@@ -1,0 +1,210 @@
+---
+title: "week_1_wed"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r}
+library(tidyverse)   # Keeping things tidy (https://www.tidyverse.org/packages/)
+library(janitor)     # Housekeeping (https://cran.r-project.org/web/packages/janitor/vignettes/janitor.html)
+library(here)        # Location, location, location (https://here.r-lib.org/)
+library(jtools)      # Pretty regression output (https://jtools.jacob-long.com/)
+library(gt)          # Tables (https://gt.rstudio.com/)
+library(gtsummary)   # Table for checking balance (https://www.danieldsjoberg.com/gtsummary/)
+library(performance) # Check model diagnostics (https://easystats.github.io/performance/index.html)
+```
+
+```{r}
+variable_descriptions <- tribble(
+  ~"Label", ~"Description",  
+ #----------|-------------|,
+  "zoneid" , "Zone or neighborhood ID: The observational unit (N=44)",   
+  "waste_piles" , "The outcome variable (Y): The number of waste pile burns recorded (Range; 5, 125)",  
+  "treat" , "The treatment assignment variable (0 = Control Group; 1 = Treatment Group)"
+ )
+
+gt(variable_descriptions) %>% 
+    tab_header(title = "Focal Variables - Evaluating Treatment Effects"  # Add a title
+  ) %>%
+  tab_style(style = cell_text(weight = "bold"),
+    locations = cells_column_labels()  # Make header row bold
+  ) 
+```
+
+
+```{r}
+#waste pile count data:
+counts_gpx <- read_csv(here("data", "waste_pile_counts_gpx.csv")) %>% 
+    rename("waste_piles" = "total",
+           "rain_0_48hrs" = "rf_0_to_48_hours",
+           "rain_49_168hrs" = "rf_49_to_168_hours") %>% 
+    filter(survey%in%c(
+      "post_treatment_1","post_treatment_2","post_treatment_3",
+      "post_treatment_4","post_treatment_5"))
+
+#select subset of post-treatment periods (remove time point 5):
+post_treat_subset <- counts_gpx %>% 
+   filter(survey == "post_treatment_4")
+```
+
+
+------------------------------------------------------------------------
+
+### Model 1: Simple OLS estimator
+
+Review of regression: Ordinary Least Squares (OLS)
+
+------------------------------------------------------------------------
+
+```{r, eval=FALSE}
+
+m1_ols <- summ(m1_ols, model.fit = FALSE)
+```
+
+### Are we making reasonable assumptions?
+
+    Let's take a quick look at our outcome variable `waste piles`!
+
+```{r}
+post_treat_subset %>%
+  ggplot(aes(x = waste_piles)) +
+  geom_histogram(binwidth = 5, fill = "blue", color = "white", alpha = 0.7) +
+  labs(title = "Histogram of Waste Piles",
+    x = "Waste Piles (counts)",
+    y = "Count") +
+    theme_minimal()
+
+```
+
+### Check model assumption: normality of residuals
+
+Make a QQ plot displaying residuals (y-axis) compared to the normal distribution (x-axis)
+
+```{r}
+check_model(m1_ols,  check = "qq" )
+```
+
+**Key takeaways:** 
+
+-   Hmmm... our outcome is a count variable 
+-   Is the OLS assumption, *normality of residuals*, a good fit for the data?
+-   Probably not, let's do away with normality!
+
+------------------------------------------------------------------------
+
+###  Relax- time to generalize!
+
+-   We can `relax` the normality assumption
+-   The outcome `waste_piles` is a `count variable`, not a true continuous variable
+-   We can try out a common estimator used for count outcomes, `Poisson regression`
+-   Let's estimate a `Generalized Linear Model (GLM)`
+
+### Model 2: Poisson Generalized Linear Regression Model
+
+-   Poisson regression explicitly models the outcome as a count variable
+-   Assumes `Y` follows a Poisson distribution with non-negative integers (counts!)
+-   Poisson regression makes an additional assumption- that variance (dispersion) is proportional to the mean 
+
+    Does the data match the theoretical distribution proposed?
+
+```{r}
+lambda_hat <- mean(post_treat_subset$waste_piles)
+
+poisson_curve <- tibble(
+  x = seq(0, max(post_treat_subset$waste_piles), by = 1),  # Range of x values
+  density = dpois(seq(0, max(post_treat_subset$waste_piles), by = 1), 
+                  lambda = mean(post_treat_subset$waste_piles)) 
+)
+
+ggplot(post_treat_subset, aes(x = waste_piles)) +
+  geom_histogram(aes(y = ..density..), binwidth = 5, color = "white", fill = "blue", alpha = 0.7) + 
+  geom_line(data = poisson_curve, aes(x = x, y = density), color = "red", size = 1) +  # Poisson curve
+  geom_density(color = "green", size = 1, adjust = 1.5) +  # KDE for a smoother curve
+  labs(
+    title = "Plot of Empirical (Green) v. Theoretical (Red) Distributions",
+    x = "Waste Pile Counts",
+    y = "Density"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+m2_poisson <- glm(
+  waste_piles ~ treat,
+  family = poisson(link = "log"),
+  data = post_treat_subset
+)
+# Variance is proportional to the mean, dispersion
+
+summ(m2_poisson, model.fit = FALSE)
+```
+
+```{r}
+# over dispersion means variance is larger than the mean which implies it is not a great model
+check_overdispersion
+```
+
+**Check overdispersion assumption**
+```{r}
+check_overdispersion(m2_poisson)
+exp(-.38)-1
+```
+
+We just do expoenciate to the coefficient so we add exp(-.38)-1
+This model is estimating a 31% reduction in waste models
+
+**Key takeaways:**
+
+-   This test implies the dispersion (variance) is significantly larger than the mean!
+-   The Poisson regression model assumes dispersion is proportional to the mean (`dispersion = mean`)
+-   We can see from our previous plot that the data has significant overdispersion (`dispersion > mean`)
+-   A common solution, add a dispersion parameter (e.g., estimate a `negative binomial model`)
+
+**Intuition check:** The new estimate values are on a different scale...
+
+-   The coefficients returned by `glm()` are now on the `log scale` (i.e., `exp(coef) = Odds Ratio`)
+-   Notice in the GLM function we specified the distribution as, `family = poisson(link = "log")`
+-   Alternative specification option- use a simple `log transformation` to get comparable result
+-   Importantly, the `log-OLS` regression model coefficients are intuitive to interpret
+
+Log transforms outcome
+
+```{r}
+m3_log <- lm(
+  log(waste_piles) ~ 
+    treat, 
+  data = post_treat_subset
+)
+
+summ(m3_log, model.fit = FALSE)
+```
+
+This model shows coefficient is already in the scale of percent change, we are stimating a 42% reduction in waste piles
+OLS is really well documented we know assumptions, its a little more straightforward
+------------------------------------------------------------------------
+
+### Model 3: Simple is best! - the econometricians trick
+
+------------------------------------------------------------------------
+
+```{r}
+### Let's do some quick math to compare treatment effect estimates
+
+# Calculate percent change in waste piles in each model:
+
+m1_est_ols = (-24.77/77.91)*100  # % change = -31.8
+m2_est_poi = (exp(-.38) -1)*100  # % change = -31.6
+m3_est_log = (-0.42)*100         # % change = -42
+
+```
+This is telling us the estimate change, and you can see the difference in models used
+
+### Compare observed data to simulated data based on the fitted model (`m3_log`)
+
+```{r}
+check_predictions(m3_log, verbose = FALSE)
+```
+
